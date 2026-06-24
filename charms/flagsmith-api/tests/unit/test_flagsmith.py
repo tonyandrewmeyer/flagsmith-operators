@@ -34,10 +34,10 @@ def test_build_environment_minimal():
     assert env["DJANGO_SECRET_KEY"] == "k"
     assert env["PROMETHEUS_ENABLED"] == "true"
     assert env["SERVE_FE_ASSETS"] == "true"
-    # No redis, no tracing, no task processor unless asked.
+    # No redis or tracing unless asked; tasks default to in-process thread.
     assert "CACHE_LOCATION" not in env
     assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in env
-    assert "TASK_RUN_METHOD" not in env
+    assert env["TASK_RUN_METHOD"] == "SEPARATE_THREAD"
 
 
 def test_build_environment_with_optional_integrations():

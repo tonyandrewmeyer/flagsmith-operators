@@ -130,6 +130,7 @@ def build_layer(config: EdgeProxyConfig) -> dict[str, Any]:
                 "override": "replace",
                 "summary": "Flagsmith edge proxy",
                 "command": START_COMMAND,
+                "working-dir": "/app",
                 "startup": "enabled",
                 "environment": build_environment(config),
             }

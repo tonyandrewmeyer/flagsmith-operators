@@ -18,9 +18,7 @@ POSTGRES = "postgresql-k8s"
 
 def test_deploy_and_integrate(charm: pathlib.Path, juju: jubilant.Juju):
     """Deploy the API with PostgreSQL and confirm it reaches active."""
-    resources = {
-        "flagsmith-image": METADATA["resources"]["flagsmith-image"]["upstream-source"]
-    }
+    resources = {"flagsmith-image": METADATA["resources"]["flagsmith-image"]["upstream-source"]}
     juju.deploy(charm.resolve(), app=APP, resources=resources)
     juju.deploy(POSTGRES, channel="14/stable", trust=True)
 
@@ -39,11 +37,7 @@ def test_workload_version_is_set(juju: jubilant.Juju):
 
 def test_create_admin_user_action(juju: jubilant.Juju):
     """The create-admin-user action returns a generated password."""
-    leader = next(
-        unit
-        for unit, info in juju.status().apps[APP].units.items()
-        if info.leader
-    )
+    leader = next(unit for unit, info in juju.status().apps[APP].units.items() if info.leader)
     result = juju.run(leader, "create-admin-user", {"email": "admin@example.com"})
     assert result.results.get("password")
     assert result.results.get("email") == "admin@example.com"

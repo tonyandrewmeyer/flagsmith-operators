@@ -23,6 +23,10 @@ CONTAINER_NAME = "flagsmith-api"
 # The Flagsmith image entrypoint (scripts/run-docker.sh) dispatches on argv[0].
 ENTRYPOINT = "/app/scripts/run-docker.sh"
 
+# The image WORKDIR; Django's manage.py lives here and must be the cwd for
+# both the long-running service and any exec (migrations, shell, version).
+WORKING_DIR = "/app"
+
 # The port the API listens on inside the container.
 API_PORT = 8000
 
@@ -102,8 +106,9 @@ def build_environment(config: FlagsmithConfig) -> dict[str, str]:
         env["DJANGO_SECRET_KEY"] = config.secret_key
     if config.domain:
         env["FLAGSMITH_DOMAIN"] = config.domain
-    if config.task_processor_enabled:
-        env["TASK_RUN_METHOD"] = "TASK_PROCESSOR"
+    env["TASK_RUN_METHOD"] = (
+        "TASK_PROCESSOR" if config.task_processor_enabled else "SEPARATE_THREAD"
+    )
     if config.tracing_endpoint:
         # Flagsmith supports OpenTelemetry OTLP export natively.
         env["OPENTELEMETRY_ENABLED"] = "true"
@@ -124,6 +129,7 @@ def build_layer(config: FlagsmithConfig) -> dict[str, Any]:
                 "override": "replace",
                 "summary": "Flagsmith API (gunicorn)",
                 "command": f"{ENTRYPOINT} serve",
+                "working-dir": WORKING_DIR,
                 "startup": "enabled",
                 "environment": build_environment(config),
             }

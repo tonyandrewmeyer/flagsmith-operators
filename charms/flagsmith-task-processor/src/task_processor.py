@@ -82,6 +82,7 @@ def build_layer(config: TaskProcessorConfig) -> dict[str, Any]:
                 "override": "replace",
                 "summary": "Flagsmith task processor",
                 "command": f"{ENTRYPOINT} run-task-processor",
+                "working-dir": "/app",
                 "startup": "enabled",
                 "environment": build_environment(config),
             }

@@ -171,7 +171,8 @@ class FlagsmithApiCharm(ops.CharmBase):
             enable_telemetry=bool(self.config["enable-telemetry"]),
             use_postgres_for_analytics=bool(self.config["use-postgres-for-analytics"]),
             prometheus_enabled=True,
-            task_processor_enabled=self._task_processor_related(),
+            task_processor_enabled=typing.cast(str, self.config["task-run-method"])
+            == "TASK_PROCESSOR",
             tracing_endpoint=self._tracing_endpoint(),
             extra_env=extra_env,
         )
@@ -200,10 +201,6 @@ class FlagsmithApiCharm(ops.CharmBase):
 
     def _redis_related(self) -> bool:
         return self.model.get_relation("redis") is not None
-
-    def _task_processor_related(self) -> bool:
-        rel = self.model.get_relation("flagsmith-api")
-        return rel is not None and any(unit.app.name != self.app.name for unit in rel.units)
 
     # ------------------------------------------------------------------ #
     # Secret-key management
@@ -282,6 +279,7 @@ class FlagsmithApiCharm(ops.CharmBase):
         process = self.container.exec(
             [flagsmith.ENTRYPOINT, "migrate"],
             environment=env,
+            working_dir=flagsmith.WORKING_DIR,
             timeout=600,
         )
         try:
@@ -357,7 +355,12 @@ class FlagsmithApiCharm(ops.CharmBase):
         name = event.params.get("name", "Administrator")
         first, _, last = name.partition(" ")
         script = (
+            "import os;"
             "from users.models import FFAdminUser;"
+            "email = os.environ['FS_ADMIN_EMAIL'];"
+            "password = os.environ['FS_ADMIN_PASSWORD'];"
+            "first = os.environ['FS_ADMIN_FIRST'];"
+            "last = os.environ['FS_ADMIN_LAST'];"
             "u, created = FFAdminUser.objects.get_or_create(email=email,"
             "defaults={'first_name': first, 'last_name': last});"
             "u.is_superuser = True; u.is_staff = True;"
@@ -366,11 +369,19 @@ class FlagsmithApiCharm(ops.CharmBase):
             "print('created' if created else 'updated')"
         )
         env = flagsmith.build_environment(config)
-        env.update({"email": email, "password": password, "first": first, "last": last})
+        env.update(
+            {
+                "FS_ADMIN_EMAIL": email,
+                "FS_ADMIN_PASSWORD": password,
+                "FS_ADMIN_FIRST": first,
+                "FS_ADMIN_LAST": last,
+            }
+        )
         try:
             proc = self.container.exec(
                 [flagsmith.ENTRYPOINT, "shell", "-c", script],
                 environment=env,
+                working_dir=flagsmith.WORKING_DIR,
                 timeout=120,
             )
             out, _ = proc.wait_output()
@@ -418,17 +429,19 @@ class FlagsmithApiCharm(ops.CharmBase):
         key = event.params["environment-api-key"]
         config = self._build_config()
         env = flagsmith.build_environment(config)
+        env["FS_ENV_API_KEY"] = key
         script = (
+            "import os, json;"
             "from environments.models import Environment;"
             "from environments.dynamodb.types import map_environment_to_environment_document;"
-            "import json;"
-            f"e = Environment.objects.get(api_key='{key}');"
+            "e = Environment.objects.get(api_key=os.environ['FS_ENV_API_KEY']);"
             "print(json.dumps(map_environment_to_environment_document(e), default=str))"
         )
         try:
             proc = self.container.exec(
                 [flagsmith.ENTRYPOINT, "shell", "-c", script],
                 environment=env,
+                working_dir=flagsmith.WORKING_DIR,
                 timeout=60,
             )
             out, _ = proc.wait_output()

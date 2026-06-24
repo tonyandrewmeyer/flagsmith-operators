@@ -149,6 +149,15 @@ config:
         when no dedicated analytics datastore (e.g. InfluxDB) is configured.
       default: true
       type: boolean
+    task-run-method:
+      description: |
+        How the API runs asynchronous tasks (TASK_RUN_METHOD). Set to
+        "TASK_PROCESSOR" (the default) when running the flagsmith-task-processor
+        charm, so work is queued for it; "SEPARATE_THREAD" runs tasks in the API
+        process (no separate processor needed, but adds request-path load);
+        "SYNCHRONOUSLY" runs them inline (testing only).
+      default: "TASK_PROCESSOR"
+      type: string
     extra-env:
       description: |
         Additional environment variables to inject into the workload, as a YAML
