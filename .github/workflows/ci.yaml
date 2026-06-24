@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-unit:
+    name: Lint & unit (${{ matrix.charm }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        charm:
+          - flagsmith-api
+          - flagsmith-task-processor
+          - flagsmith-frontend
+          - flagsmith-edge-proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
+
+      - name: Lint
+        working-directory: charms/${{ matrix.charm }}
+        run: tox -e lint
+
+      - name: Unit tests
+        working-directory: charms/${{ matrix.charm }}
+        run: tox -e unit
+
+  pack:
+    name: Pack (${{ matrix.charm }})
+    runs-on: ubuntu-24.04
+    needs: lint-unit
+    strategy:
+      fail-fast: false
+      matrix:
+        charm:
+          - flagsmith-api
+          - flagsmith-task-processor
+          - flagsmith-frontend
+          - flagsmith-edge-proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install charmcraft
+        run: sudo snap install charmcraft --classic
+
+      - name: Set up LXD
+        uses: canonical/setup-lxd@v0.1.2
+
+      - name: Pack charm
+        working-directory: charms/${{ matrix.charm }}
+        run: charmcraft pack --verbose
+
+      - name: Upload charm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.charm }}
+          path: charms/${{ matrix.charm }}/*.charm
+          if-no-files-found: error
+
+  integration:
+    name: Integration (k8s)
+    runs-on: ubuntu-24.04
+    needs: pack
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Juju + MicroK8s via concierge
+        run: |
+          sudo snap install concierge --classic
+          sudo concierge prepare -p microk8s
+
+      - name: Install uv & tox
+        uses: astral-sh/setup-uv@v5
+      - run: uv tool install tox --with tox-uv
+
+      - name: Download packed charms
+        uses: actions/download-artifact@v4
+        with:
+          path: charms-dist
+
+      - name: Run integration tests
+        env:
+          # tests pick up the packed .charm via CHARM_PATH when set.
+          CHARM_DIST_DIR: ${{ github.workspace }}/charms-dist
+        run: |
+          for charm in flagsmith-api flagsmith-task-processor flagsmith-frontend flagsmith-edge-proxy; do
+            charm_file=$(find "$CHARM_DIST_DIR/$charm" -name '*.charm' | head -1)
+            echo "Integration testing $charm ($charm_file)"
+            CHARM_PATH="$charm_file" tox -c "charms/$charm" -e integration || exit 1
+          done

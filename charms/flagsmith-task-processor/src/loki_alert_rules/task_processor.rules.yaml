@@ -1,0 +1,16 @@
+groups:
+  - name: flagsmith-task-processor-logs
+    rules:
+      - alert: FlagsmithTaskProcessorErrorLogSpike
+        expr: |
+          sum by (juju_unit) (
+            count_over_time({juju_charm="flagsmith-task-processor"} |~ `(?i)\b(error|exception|traceback)\b` [5m])
+          ) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated error logging from the Flagsmith task processor"
+          description: >
+            More than 25 error/exception log lines in 5 minutes from
+            {{ $labels.juju_unit }}. A task may be failing repeatedly.

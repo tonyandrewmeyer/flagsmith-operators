@@ -1,0 +1,15 @@
+groups:
+  - name: flagsmith-task-processor
+    rules:
+      - alert: FlagsmithTaskProcessorDown
+        expr: up{juju_charm="flagsmith-task-processor"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Flagsmith task processor target is down"
+          description: >
+            The task processor unit {{ $labels.juju_unit }} has been
+            unreachable by Prometheus for more than 5 minutes. Asynchronous work
+            (webhooks, audit logging, scheduled flag changes, analytics) is not
+            being processed.

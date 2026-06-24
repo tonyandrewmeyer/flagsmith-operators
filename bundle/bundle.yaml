@@ -1,0 +1,88 @@
+# Flagsmith deployment bundle for Kubernetes.
+#
+# Deploys the full Flagsmith platform — API, task processor, dedicated frontend
+# and edge proxy — wired to PostgreSQL, Redis, ingress and the Canonical
+# Observability Stack.
+#
+# Usage:
+#   juju add-model flagsmith
+#   juju deploy ./bundle/bundle.yaml --trust
+#
+# For a local build (charms packed in the repo), override the charm paths with
+# an overlay or use 'charmcraft pack' outputs in place of the Charmhub names.
+name: flagsmith
+description: |
+  The Flagsmith feature-flag platform: API, task processor, frontend and edge
+  proxy, integrated with PostgreSQL, Redis, Traefik ingress and COS.
+bundle: kubernetes
+
+applications:
+  flagsmith-api:
+    charm: flagsmith-api
+    channel: latest/edge
+    scale: 2
+    trust: true
+    resources:
+      flagsmith-image: flagsmith/flagsmith:2.245.0
+    options:
+      # A dedicated frontend application serves the dashboard, so the API does
+      # not need to.
+      enable-admin-dashboard: false
+
+  flagsmith-task-processor:
+    charm: flagsmith-task-processor
+    channel: latest/edge
+    scale: 1
+    trust: true
+    resources:
+      flagsmith-image: flagsmith/flagsmith:2.245.0
+
+  flagsmith-frontend:
+    charm: flagsmith-frontend
+    channel: latest/edge
+    scale: 1
+    trust: true
+    resources:
+      flagsmith-image: flagsmith/flagsmith-frontend:2.245.0
+
+  flagsmith-edge-proxy:
+    charm: flagsmith-edge-proxy
+    channel: latest/edge
+    scale: 1
+    trust: true
+    resources:
+      flagsmith-image: flagsmith/edge-proxy:2.23.0
+
+  postgresql:
+    charm: postgresql-k8s
+    channel: 14/stable
+    scale: 1
+    trust: true
+    constraints: mem=2G
+
+  redis:
+    charm: redis-k8s
+    channel: latest/edge
+    scale: 1
+    trust: true
+
+  traefik:
+    charm: traefik-k8s
+    channel: latest/stable
+    scale: 1
+    trust: true
+
+relations:
+  # Data layer.
+  - ["flagsmith-api:database", "postgresql:database"]
+  - ["flagsmith-api:redis", "redis:redis"]
+
+  # Inter-charm: the API shares its internal URL, DB URL and Django secret key
+  # with the other Flagsmith components.
+  - ["flagsmith-task-processor:flagsmith-api", "flagsmith-api:flagsmith-api"]
+  - ["flagsmith-frontend:flagsmith-api", "flagsmith-api:flagsmith-api"]
+  - ["flagsmith-edge-proxy:flagsmith-api", "flagsmith-api:flagsmith-api"]
+
+  # Ingress: API and frontend exposed externally via Traefik.
+  - ["flagsmith-api:ingress", "traefik:ingress"]
+  - ["flagsmith-frontend:ingress", "traefik:ingress"]

@@ -2,80 +2,160 @@
 # Copyright 2026 Flagsmith Charmers
 # See LICENSE file for licensing details.
 
-"""Charm the application."""
+"""Charmed operator for the Flagsmith task processor.
+
+A holistic (reconciler) charm. It runs the ``flagsmith/flagsmith`` image with
+the ``run-task-processor`` subcommand and consumes the shared database URL and
+Django secret key published by the flagsmith-api charm over the ``flagsmith-api``
+relation. The task processor is stateless and horizontally scalable; the API
+charm owns database migrations, so there is no leader special-casing here.
+"""
 
 import logging
-import time
+import typing
 
 import ops
+from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
+from charms.loki_k8s.v1.loki_push_api import LogForwarder
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
+from charms.tempo_coordinator_k8s.v0.charm_tracing import trace_charm
+from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 
-# A standalone module for workload-specific logic (no charming concerns):
-import flagsmith_task_processor
+import task_processor
+from task_processor import (
+    CONTAINER_NAME,
+    METRICS_PATH,
+    PORT,
+    SERVICE_NAME,
+    TaskProcessorConfig,
+)
 
 logger = logging.getLogger(__name__)
 
-SERVICE_NAME = "some-service"  # Name of Pebble service that runs in the workload container.
+API_RELATION = "flagsmith-api"
 
 
+@trace_charm(
+    tracing_endpoint="charm_tracing_endpoint",
+    extra_types=(MetricsEndpointProvider,),
+)
 class FlagsmithTaskProcessorCharm(ops.CharmBase):
-    """Charm the application."""
+    """Operate the Flagsmith task processor workload."""
 
     def __init__(self, framework: ops.Framework):
         super().__init__(framework)
-        framework.observe(self.on["some_container"].pebble_ready, self._on_pebble_ready)
-        self.container = self.unit.get_container("some-container")
+        self.container = self.unit.get_container(CONTAINER_NAME)
 
-    def _on_pebble_ready(self, event: ops.PebbleReadyEvent):
-        """Handle pebble-ready event."""
-        self.unit.status = ops.MaintenanceStatus("starting workload")
-        # To start the workload, we'll add a Pebble layer to the workload container.
-        # The layer specifies which service to run.
-        layer: ops.pebble.LayerDict = {
-            "services": {
-                SERVICE_NAME: {
-                    "override": "replace",
-                    "summary": "A service that runs in the workload container",
-                    "command": "/bin/foo",  # Change this!
-                    "startup": "enabled",
+        self.metrics = MetricsEndpointProvider(
+            self,
+            relation_name="metrics-endpoint",
+            jobs=[
+                {
+                    "metrics_path": METRICS_PATH,
+                    "static_configs": [{"targets": [f"*:{PORT}"]}],
                 }
-            }
-        }
-        self.container.add_layer("base", layer, combine=True)
-        # If the container image is a rock, the container already has a Pebble layer.
-        # In this case, you could remove 'add_layer' or use 'add_layer' to extend the rock's layer.
-        # To learn about rocks, see https://documentation.ubuntu.com/rockcraft/en/stable/
-        self.container.replan()  # Starts the service (because 'startup' is enabled in the layer).
-        self.wait_for_ready()
-        version = flagsmith_task_processor.get_version()
-        if version is not None:
-            self.unit.set_workload_version(version)
-        self.unit.status = ops.ActiveStatus()
+            ],
+        )
+        self.dashboards = GrafanaDashboardProvider(self, relation_name="grafana-dashboard")
+        self.log_forwarder = LogForwarder(self, relation_name="logging")
+        self.tracing = TracingEndpointRequirer(
+            self, relation_name="tracing", protocols=["otlp_http"]
+        )
 
-    def is_ready(self) -> bool:
-        """Check whether the workload is ready to use."""
-        # We'll first check whether all Pebble services are running.
-        for name, service_info in self.container.get_services().items():
-            if not service_info.is_running():
-                logger.info("the workload is not ready (service '%s' is not running)", name)
-                return False
-        # The Pebble services are running, but the workload might not be ready to use.
-        # So we'll check whether all Pebble 'ready' checks are passing.
-        checks = self.container.get_checks(level=ops.pebble.CheckLevel.READY)
-        for check_info in checks.values():
-            if check_info.status != ops.pebble.CheckStatus.UP:
-                return False
-        return True
+        for event in (
+            self.on[CONTAINER_NAME].pebble_ready,
+            self.on.config_changed,
+            self.on.upgrade_charm,
+            self.on.start,
+            self.on[API_RELATION].relation_changed,
+            self.on[API_RELATION].relation_broken,
+            self.tracing.on.endpoint_changed,
+            self.tracing.on.endpoint_removed,
+        ):
+            framework.observe(event, self._reconcile)
 
-    def wait_for_ready(self) -> None:
-        """Wait for the workload to be ready to use."""
-        for _ in range(3):
-            if self.is_ready():
-                return
-            time.sleep(1)
-        logger.error("the workload was not ready within the expected time")
-        raise RuntimeError("workload is not ready")
-        # The runtime error is for you (the charm author) to see, not for the user of the charm.
-        # Make sure that this function waits long enough for the workload to be ready.
+        framework.observe(self.on.collect_unit_status, self._on_collect_status)
+
+    # ------------------------------------------------------------------ #
+    # Reconciliation
+    # ------------------------------------------------------------------ #
+    def _reconcile(self, _event: ops.EventBase) -> None:
+        if not self.container.can_connect():
+            logger.debug("workload container not ready; deferring to next event")
+            return
+        try:
+            config = self._build_config()
+        except ValueError:
+            logger.exception("invalid configuration; not (re)starting workload")
+            return
+        if not config.is_ready:
+            if self.container.get_services(SERVICE_NAME):
+                self.container.stop(SERVICE_NAME)
+            return
+        layer = ops.pebble.Layer(
+            typing.cast(ops.pebble.LayerDict, task_processor.build_layer(config))
+        )
+        self.container.add_layer(SERVICE_NAME, layer, combine=True)
+        self.container.replan()
+
+    def _build_config(self) -> TaskProcessorConfig:
+        api = self._api_relation_data()
+        return TaskProcessorConfig(
+            database_url=api.get("database-url"),
+            secret_key=api.get("secret-key"),
+            log_level=typing.cast(str, self.config["log-level"]).upper(),
+            num_threads=int(typing.cast(int, self.config["num-threads"])),
+            sleep_interval_ms=int(typing.cast(int, self.config["sleep-interval-ms"])),
+            queue_pop_size=int(typing.cast(int, self.config["queue-pop-size"])),
+            grace_period_ms=int(typing.cast(int, self.config["grace-period-ms"])),
+            prometheus_enabled=True,
+            tracing_endpoint=self._tracing_endpoint(),
+            extra_env=task_processor.parse_extra_env(typing.cast(str, self.config["extra-env"])),
+        )
+
+    def _api_relation_data(self) -> dict[str, str]:
+        relation = self.model.get_relation(API_RELATION)
+        if not relation or not relation.app:
+            return {}
+        return dict(relation.data[relation.app])
+
+    def _tracing_endpoint(self) -> str | None:
+        if self.tracing.is_ready():
+            return self.tracing.get_endpoint("otlp_http")
+        return None
+
+    @property
+    def charm_tracing_endpoint(self) -> str | None:
+        """OTLP endpoint for tracing the charm code itself."""
+        if self.tracing.is_ready():
+            return self.tracing.get_endpoint("otlp_http")
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Status
+    # ------------------------------------------------------------------ #
+    def _on_collect_status(self, event: ops.CollectStatusEvent) -> None:
+        if not self.container.can_connect():
+            event.add_status(ops.MaintenanceStatus("waiting for workload container"))
+            return
+        try:
+            config = self._build_config()
+        except ValueError as exc:
+            event.add_status(ops.BlockedStatus(f"invalid config: {exc}"))
+            return
+        if not self.model.get_relation(API_RELATION):
+            event.add_status(ops.BlockedStatus("missing required relation: flagsmith-api"))
+            return
+        if not config.is_ready:
+            event.add_status(
+                ops.WaitingStatus("waiting for database and secret from flagsmith-api")
+            )
+            return
+        services = self.container.get_services(SERVICE_NAME)
+        if not services or not list(services.values())[0].is_running():
+            event.add_status(ops.WaitingStatus("starting Flagsmith task processor"))
+            return
+        event.add_status(ops.ActiveStatus())
 
 
 if __name__ == "__main__":  # pragma: nocover

@@ -13,7 +13,10 @@ requires-python = ">=3.10"
 # 'charm-libs' block in charmcraft.yaml, run `charmcraft fetch-libs` to download the libraries,
 # then inspect the libraries for dependencies specified in PYDEPS. List those dependencies here.
 dependencies = [
-    "ops~=3.7"
+    "cosl>=0.0.53",
+    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+    "ops~=3.7",
+    "pydantic>=2.13.4",
 ]
 
 [dependency-groups]
@@ -73,7 +76,8 @@ extend-exclude = ["__pycache__", "*.egg_info"]
 max-complexity = 10
 
 [tool.codespell]
-skip = "build,lib,venv,icon.svg,.tox,.git,.mypy_cache,.ruff_cache,.coverage"
+skip = "build,lib,venv,icon.svg,.tox,.git,.mypy_cache,.ruff_cache,.coverage,uv.lock"
+ignore-words-list = "ser"
 
 [tool.pyright]
 include = ["src", "tests"]

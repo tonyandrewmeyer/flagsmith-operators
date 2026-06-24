@@ -1,0 +1,39 @@
+name: Release to Charmhub
+
+# Publishes each charm to its Charmhub channel on push to main. Requires the
+# CHARMHUB_TOKEN secret (create with `charmcraft login --export`). This workflow
+# is provided ready-to-use but will no-op without the secret configured.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charms/**"
+  workflow_dispatch:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yaml
+
+  release:
+    name: Release ${{ matrix.charm }}
+    runs-on: ubuntu-24.04
+    needs: ci
+    if: ${{ github.repository_owner != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        charm:
+          - flagsmith-api
+          - flagsmith-task-processor
+          - flagsmith-frontend
+          - flagsmith-edge-proxy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload charm to Charmhub
+        uses: canonical/charming-actions/upload-charm@2.7.0
+        with:
+          credentials: ${{ secrets.CHARMHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          charm-path: charms/${{ matrix.charm }}
+          channel: latest/edge
