@@ -1,0 +1,43 @@
+groups:
+  - name: flagsmith-api
+    rules:
+      - alert: FlagsmithApiDown
+        expr: up{juju_charm="flagsmith-api"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Flagsmith API target is down"
+          description: >
+            The Flagsmith API unit {{ $labels.juju_unit }} has been
+            unreachable by Prometheus for more than 5 minutes.
+
+      - alert: FlagsmithApiHighErrorRate
+        expr: |
+          sum by (juju_unit) (rate(django_http_responses_total_by_status_total{status=~"5..",juju_charm="flagsmith-api"}[5m]))
+            /
+          sum by (juju_unit) (rate(django_http_responses_total_by_status_total{juju_charm="flagsmith-api"}[5m]))
+            > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Flagsmith API 5xx error rate above 5%"
+          description: >
+            More than 5% of HTTP responses from {{ $labels.juju_unit }} have
+            been 5xx for 10 minutes. Check the API logs and database health.
+
+      - alert: FlagsmithApiHighRequestLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, juju_unit) (rate(django_http_requests_latency_seconds_by_view_method_bucket{juju_charm="flagsmith-api"}[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Flagsmith API p95 latency above 1s"
+          description: >
+            The 95th percentile request latency for {{ $labels.juju_unit }} has
+            exceeded 1 second for 10 minutes. Consider scaling the API or
+            enabling a Redis cache and the task processor.

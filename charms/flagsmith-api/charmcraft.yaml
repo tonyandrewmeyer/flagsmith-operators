@@ -2,19 +2,24 @@
 # See https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/
 type: charm
 name: flagsmith-api
-title: Charm Template
-summary: A very short one-line summary of the charm.
+title: Flagsmith API
+summary: The Flagsmith REST API, admin and unified dashboard.
 description: |
-  A single sentence that says what the charm is, concisely and memorably.
+  Flagsmith is an open-source feature flag, remote config and A/B testing
+  platform. This charm operates the Flagsmith API: the Django/Gunicorn service
+  that exposes the REST API used by SDKs and the management dashboard, performs
+  authentication and authorisation, and owns the PostgreSQL database schema.
 
-  A paragraph of one to three short sentences, that describe what the charm does.
+  The charm requires a PostgreSQL relation and can optionally use Redis for
+  caching. It runs and guards database migrations (leader-only), exposes day-2
+  operational actions (create admin user, rotate the Django secret key, run
+  migrations, toggle maintenance mode), and integrates with the Canonical
+  Observability Stack for metrics, logs, dashboards, traces and alerts.
 
-  A third paragraph that explains what need the charm meets.
+  Scale the API horizontally with `juju scale-application`. Pair it with the
+  flagsmith-task-processor charm to run asynchronous work (webhooks, audit
+  logging, scheduled flag changes, analytics) off the request path.
 
-  Finally, a paragraph that describes whom the charm is useful for.
-
-# Documentation:
-# https://documentation.ubuntu.com/charmcraft/stable/howto/build-guides/select-platforms/
 base: ubuntu@24.04
 platforms:
   amd64:
@@ -31,41 +36,163 @@ parts:
     build-snaps:
       - astral-uv
 
-# (Optional) Configuration options for the charm
-# This config section defines charm config options, and populates the Configure
-# tab on Charmhub.
-# More information on this section at:
-# https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/#config
-# General configuration documentation:
-# https://documentation.ubuntu.com/juju/3.6/reference/configuration/#application-configuration
+containers:
+  flagsmith-api:
+    resource: flagsmith-image
+
+resources:
+  flagsmith-image:
+    type: oci-image
+    description: OCI image for the Flagsmith API workload.
+    upstream-source: flagsmith/flagsmith:2.245.0
+
+# Relations.
+requires:
+  database:
+    interface: postgresql_client
+    limit: 1
+    optional: false
+  redis:
+    interface: redis
+    limit: 1
+    optional: true
+  ingress:
+    interface: ingress
+    limit: 1
+    optional: true
+  logging:
+    interface: loki_push_api
+    optional: true
+  tracing:
+    interface: tracing
+    limit: 1
+    optional: true
+
+provides:
+  metrics-endpoint:
+    interface: prometheus_scrape
+    optional: true
+  grafana-dashboard:
+    interface: grafana_dashboard
+    optional: true
+  # Other Flagsmith charms (frontend, edge-proxy, task-processor) consume the
+  # API's internal URL and shared Django configuration over this relation.
+  flagsmith-api:
+    interface: flagsmith_api
+    optional: true
+
+peers:
+  flagsmith-peers:
+    interface: flagsmith_peers
+
 config:
   options:
-    # An example config option to customise the log level of the workload
     log-level:
       description: |
-        Configures the log level of gunicorn.
+        Application log level for the Flagsmith API. One of: "DEBUG", "INFO",
+        "WARNING", "ERROR", "CRITICAL".
+      default: "INFO"
+      type: string
+    secret-key:
+      description: |
+        A Juju user secret ID containing the Django SECRET_KEY used to sign
+        sessions and tokens. Create with:
 
-        Acceptable values are: "info", "debug", "warning", "error" and "critical"
-      default: "info"
+          juju add-secret flagsmith-secret-key secret-key=$(openssl rand -hex 32)
+          juju grant-secret flagsmith-secret-key flagsmith-api
+          juju config flagsmith-api secret-key=<secret-id>
+
+        If unset, the charm generates and persists a random key in peer
+        relation data. Setting an explicit secret is strongly recommended in
+        production so the key survives a full application teardown and is shared
+        across units.
+      type: secret
+    gunicorn-workers:
+      description: Number of Gunicorn worker processes per API unit.
+      default: 3
+      type: int
+    gunicorn-threads:
+      description: Number of threads per Gunicorn worker.
+      default: 2
+      type: int
+    gunicorn-timeout:
+      description: Gunicorn worker timeout, in seconds.
+      default: 30
+      type: int
+    enable-admin-dashboard:
+      description: |
+        Serve the bundled Flagsmith dashboard frontend assets directly from the
+        API (SERVE_FE_ASSETS). Disable this when running a dedicated
+        flagsmith-frontend application in front of the API.
+      default: true
+      type: boolean
+    allowed-hosts:
+      description: |
+        Comma-separated list of host/domain names the Django app will serve
+        (DJANGO_ALLOWED_HOSTS). Defaults to "*". Restrict this in production.
+      default: "*"
+      type: string
+    prevent-signup:
+      description: |
+        Prevent any new user signups via the dashboard (PREVENT_SIGNUP). Enable
+        this once your initial administrator account exists.
+      default: false
+      type: boolean
+    enable-telemetry:
+      description: Allow Flagsmith to send anonymous self-hosting telemetry to its authors.
+      default: true
+      type: boolean
+    use-postgres-for-analytics:
+      description: |
+        Store API and flag-analytics usage data in PostgreSQL
+        (USE_POSTGRES_FOR_ANALYTICS) rather than discarding it. Recommended
+        when no dedicated analytics datastore (e.g. InfluxDB) is configured.
+      default: true
+      type: boolean
+    extra-env:
+      description: |
+        Additional environment variables to inject into the workload, as a YAML
+        or JSON mapping. Use this as an escape hatch for Flagsmith settings the
+        charm does not expose as first-class config, e.g.
+        '{"EMAIL_HOST": "smtp.example.com", "SENDER_EMAIL": "fs@example.com"}'.
+        Values set here override charm-managed environment of the same name, so
+        use with care.
+      default: "{}"
       type: string
 
-# Your workload's containers.
-# https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/#containers
-containers:
-  some-container:
-    resource: some-container-image
-
-# This field populates the Resources tab on Charmhub.
-# https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/#resources
-resources:
-  # An OCI image resource for each container listed above.
-  # You may remove this if your charm will run without a workload sidecar container.
-  some-container-image:
-    type: oci-image
-    description: OCI image for the 'some-container' container
-    # The upstream-source field is ignored by Charmcraft and Juju, but it can be
-    # useful to developers in identifying the source of the OCI image.  It is also
-    # used by the 'canonical/charming-actions' GitHub action for automated releases.
-    # The test_deploy function in tests/integration/test_charm.py reads upstream-source
-    # to determine which OCI image to use when running the charm's integration tests.
-    upstream-source: some-repo/some-image:some-tag
+actions:
+  create-admin-user:
+    description: |
+      Create (or reset) a Flagsmith superuser/admin account. Returns the
+      generated password if one is not supplied. Leader unit only.
+    params:
+      email:
+        type: string
+        description: Email address for the admin user.
+      password:
+        type: string
+        description: Password to set. If omitted, a random password is generated and returned.
+      name:
+        type: string
+        description: Display name for the admin user.
+    required: [email]
+  rotate-secret-key:
+    description: |
+      Rotate the Django SECRET_KEY. If the charm is managing the key in peer
+      data, a new random key is generated; if a Juju user secret is configured,
+      this instructs you to update that secret instead. Rolling-restarts the
+      API. Leader unit only.
+  run-migrations:
+    description: |
+      Run outstanding Django database migrations explicitly. Migrations also run
+      automatically on install and upgrade; this action is provided for manual
+      control during maintenance windows. Leader unit only.
+  dump-environment-document:
+    description: |
+      Dump the environment document JSON for a given environment API key, for
+      debugging SDK or edge-proxy behaviour.
+    params:
+      environment-api-key:
+        type: string
+        description: The server-side environment key (e.g. "ser.xxxx").
+    required: [environment-api-key]

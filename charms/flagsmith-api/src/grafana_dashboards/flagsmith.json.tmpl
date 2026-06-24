@@ -1,0 +1,114 @@
+{
+  "title": "Flagsmith",
+  "uid": "flagsmith-overview",
+  "tags": ["flagsmith", "juju"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "juju_model",
+        "type": "query",
+        "datasource": "${prometheusds}",
+        "query": "label_values(up, juju_model)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      },
+      {
+        "name": "juju_unit",
+        "type": "query",
+        "datasource": "${prometheusds}",
+        "query": "label_values(up{juju_charm=\"flagsmith-api\"}, juju_unit)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "API availability",
+      "type": "stat",
+      "datasource": "${prometheusds}",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "min(up{juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"})",
+          "legendFormat": "up"
+        }
+      ]
+    },
+    {
+      "title": "Request rate (by status)",
+      "type": "timeseries",
+      "datasource": "${prometheusds}",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(django_http_responses_total_by_status_total{juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"}[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "title": "5xx error ratio",
+      "type": "timeseries",
+      "datasource": "${prometheusds}",
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(django_http_responses_total_by_status_total{status=~\"5..\", juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"}[5m])) / sum(rate(django_http_responses_total_by_status_total{juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"}[5m]))",
+          "legendFormat": "5xx ratio"
+        }
+      ]
+    },
+    {
+      "title": "Request latency p50/p95/p99",
+      "type": "timeseries",
+      "datasource": "${prometheusds}",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket{juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket{juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket{juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "title": "Flagsmith task processor backlog",
+      "type": "timeseries",
+      "datasource": "${prometheusds}",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(flagsmith_task_processor_enqueued_tasks_total{juju_model=~\"$juju_model\"}) - sum(flagsmith_task_processor_processed_tasks_total{juju_model=~\"$juju_model\"})",
+          "legendFormat": "pending tasks (approx)"
+        }
+      ]
+    },
+    {
+      "title": "Database connections in use",
+      "type": "timeseries",
+      "datasource": "${prometheusds}",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (juju_unit) (django_db_new_connections_total{juju_charm=\"flagsmith-api\", juju_model=~\"$juju_model\", juju_unit=~\"$juju_unit\"})",
+          "legendFormat": "{{juju_unit}}"
+        }
+      ]
+    }
+  ]
+}

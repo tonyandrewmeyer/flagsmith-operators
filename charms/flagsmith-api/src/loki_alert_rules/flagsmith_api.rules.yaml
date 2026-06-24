@@ -1,0 +1,16 @@
+groups:
+  - name: flagsmith-api-logs
+    rules:
+      - alert: FlagsmithApiErrorLogSpike
+        expr: |
+          sum by (juju_unit) (
+            count_over_time({juju_charm="flagsmith-api"} |~ `(?i)\b(error|exception|traceback)\b` [5m])
+          ) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated error logging from the Flagsmith API"
+          description: >
+            More than 25 error/exception log lines in 5 minutes from
+            {{ $labels.juju_unit }}. Inspect the logs for a recurring failure.
