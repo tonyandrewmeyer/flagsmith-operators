@@ -1,95 +1,103 @@
 # Copyright 2026 Flagsmith Charmers
 # See LICENSE file for licensing details.
-#
-# To learn more about testing, see https://documentation.ubuntu.com/ops/latest/explanation/testing/
+
+"""State-transition (Scenario) tests for the Flagsmith frontend charm."""
 
 import ops
 import pytest
 from ops import testing
 
-from charm import SERVICE_NAME, FlagsmithFrontendCharm
+from charm import FlagsmithFrontendCharm
 
-CHECK_NAME = "service-ready"  # Name of Pebble check in the mock workload container.
+CONTAINER = "flagsmith-frontend"
+SERVICE = "flagsmith-frontend"
 
-# A minimal Pebble layer for our testing.Container objects.
-# Our charm doesn't retrieve the service command or the check URL
-# from Pebble, so this layer doesn't need a real command or URL.
-MOCK_LAYER = ops.pebble.Layer(
-    {
-        "services": {
-            SERVICE_NAME: {
-                "override": "replace",
-                "command": "mock-command",
-                "startup": "enabled",
-            }
+
+@pytest.fixture
+def ctx():
+    return testing.Context(FlagsmithFrontendCharm)
+
+
+def _api_relation(api_url: str = "http://flagsmith-api.test.svc.cluster.local:8000"):
+    data = {"api-url": api_url} if api_url else {}
+    return testing.Relation(
+        endpoint="flagsmith-api",
+        interface="flagsmith_api",
+        remote_app_name="flagsmith-api",
+        remote_app_data=data,
+    )
+
+
+def test_blocked_without_api_url(ctx):
+    state_in = testing.State(
+        leader=True,
+        containers={testing.Container(CONTAINER, can_connect=True)},
+        relations={testing.PeerRelation("frontend-peers")},
+    )
+    state_out = ctx.run(ctx.on.config_changed(), state_in)
+    assert isinstance(state_out.unit_status, ops.BlockedStatus)
+    assert "API URL" in state_out.unit_status.message
+
+
+def test_active_with_api_relation(ctx):
+    container = testing.Container(CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        containers={container},
+        relations={testing.PeerRelation("frontend-peers"), _api_relation()},
+    )
+    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    svc = state_out.get_container(CONTAINER).plan.services[SERVICE]
+    assert svc.command == "node ./api/index"
+    assert svc.environment["PROXY_API_URL"] == "http://flagsmith-api.test.svc.cluster.local:8000"
+    assert state_out.unit_status == ops.ActiveStatus()
+
+
+def test_api_url_derived_strips_suffix(ctx):
+    container = testing.Container(CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        containers={container},
+        relations={
+            testing.PeerRelation("frontend-peers"),
+            _api_relation("http://api:8000/api/v1/"),
         },
-        "checks": {
-            CHECK_NAME: {
-                "override": "replace",
-                "level": "ready",
-                "threshold": 3,
-                "startup": "enabled",
-                "http": {
-                    "url": "http://localhost:1234/mock-endpoint",
-                },
-            }
-        },
-    }
-)
-
-
-def mock_get_version():
-    """Get a mock version string without executing the workload code."""
-    return "1.0.0"
-
-
-def test_pebble_ready(monkeypatch: pytest.MonkeyPatch):
-    """Test that the charm has the correct state after handling the pebble-ready event."""
-    # Arrange:
-    ctx = testing.Context(FlagsmithFrontendCharm)
-    check_in = testing.CheckInfo(
-        CHECK_NAME,
-        level=ops.pebble.CheckLevel.READY,
-        status=ops.pebble.CheckStatus.UP,  # Simulate the Pebble check passing.
     )
-    container_in = testing.Container(
-        "some-container",
-        can_connect=True,
-        layers={"base": MOCK_LAYER},
-        service_statuses={SERVICE_NAME: ops.pebble.ServiceStatus.INACTIVE},
-        check_infos={check_in},
+    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    env = state_out.get_container(CONTAINER).plan.services[SERVICE].environment
+    assert env["PROXY_API_URL"] == "http://api:8000"
+
+
+def test_api_url_config_override_wins(ctx):
+    container = testing.Container(CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        config={"api-url": "https://flags.example.com"},
+        containers={container},
+        relations={testing.PeerRelation("frontend-peers"), _api_relation()},
     )
-    state_in = testing.State(containers={container_in})
-    monkeypatch.setattr("charm.flagsmith_frontend.get_version", mock_get_version)
-
-    # Act:
-    state_out = ctx.run(ctx.on.pebble_ready(container_in), state_in)
-
-    # Assert:
-    container_out = state_out.get_container(container_in.name)
-    assert container_out.service_statuses[SERVICE_NAME] == ops.pebble.ServiceStatus.ACTIVE
-    assert state_out.workload_version is not None
-    assert state_out.unit_status == testing.ActiveStatus()
+    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    env = state_out.get_container(CONTAINER).plan.services[SERVICE].environment
+    assert env["PROXY_API_URL"] == "https://flags.example.com"
 
 
-def test_pebble_ready_service_not_ready():
-    """Test that the charm raises an error if the workload isn't ready after Pebble starts it."""
-    # Arrange:
-    ctx = testing.Context(FlagsmithFrontendCharm)
-    check_in = testing.CheckInfo(
-        CHECK_NAME,
-        level=ops.pebble.CheckLevel.READY,
-        status=ops.pebble.CheckStatus.DOWN,  # Simulate the Pebble check failing.
+def test_container_not_ready_is_maintenance(ctx):
+    state_in = testing.State(
+        leader=True,
+        containers={testing.Container(CONTAINER, can_connect=False)},
+        relations={testing.PeerRelation("frontend-peers")},
     )
-    container_in = testing.Container(
-        "some-container",
-        can_connect=True,
-        layers={"base": MOCK_LAYER},
-        service_statuses={SERVICE_NAME: ops.pebble.ServiceStatus.INACTIVE},
-        check_infos={check_in},
-    )
-    state_in = testing.State(containers={container_in})
+    state_out = ctx.run(ctx.on.config_changed(), state_in)
+    assert isinstance(state_out.unit_status, ops.MaintenanceStatus)
 
-    # Act & assert:
-    with pytest.raises(testing.errors.UncaughtCharmError):
-        ctx.run(ctx.on.pebble_ready(container_in), state_in)
+
+def test_invalid_extra_env_blocks(ctx):
+    state_in = testing.State(
+        leader=True,
+        config={"extra-env": "not json", "api-url": "http://api:8000"},
+        containers={testing.Container(CONTAINER, can_connect=True)},
+        relations={testing.PeerRelation("frontend-peers")},
+    )
+    state_out = ctx.run(ctx.on.config_changed(), state_in)
+    assert isinstance(state_out.unit_status, ops.BlockedStatus)
+    assert "extra-env" in state_out.unit_status.message

@@ -1,35 +1,34 @@
 # Copyright 2026 Flagsmith Charmers
 # See LICENSE file for licensing details.
 #
-# The integration tests use the Jubilant library. See https://documentation.ubuntu.com/jubilant/
-# To learn more about testing, see https://documentation.ubuntu.com/ops/latest/explanation/testing/
+# Integration tests use Jubilant. See https://documentation.ubuntu.com/jubilant/
 
 import logging
 import pathlib
 
 import jubilant
-import pytest
 import yaml
 
 logger = logging.getLogger(__name__)
 
 METADATA = yaml.safe_load(pathlib.Path("charmcraft.yaml").read_text())
+APP = "flagsmith-frontend"
+API = "flagsmith-api"
+POSTGRES = "postgresql-k8s"
 
 
-def test_deploy(charm: pathlib.Path, juju: jubilant.Juju):
-    """Deploy the charm under test."""
+def test_deploy_and_integrate(charm: pathlib.Path, juju: jubilant.Juju):
+    """Deploy the frontend with the API + PostgreSQL and reach active."""
     resources = {
-        "some-container-image": METADATA["resources"]["some-container-image"]["upstream-source"]
+        "flagsmith-image": METADATA["resources"]["flagsmith-image"]["upstream-source"]
     }
-    juju.deploy(charm.resolve(), app="flagsmith-frontend", resources=resources)
-    juju.wait(jubilant.all_active)
+    juju.deploy(charm.resolve(), app=APP, resources=resources)
+    juju.deploy(API, channel="latest/edge", resources={"flagsmith-image": "flagsmith/flagsmith:2.245.0"})
+    juju.deploy(POSTGRES, channel="14/stable", trust=True)
 
+    # Blocked until it knows the API URL.
+    juju.wait(lambda status: status.apps[APP].is_blocked, timeout=600)
 
-# If you implement flagsmith_frontend.get_version in the charm source,
-# remove the @pytest.mark.skip line to enable this test.
-# Alternatively, remove this test if you don't need it.
-@pytest.mark.skip(reason="flagsmith_frontend.get_version is not implemented")
-def test_workload_version_is_set(charm: pathlib.Path, juju: jubilant.Juju):
-    """Check that the correct version of the workload is running."""
-    version = juju.status().apps["flagsmith-frontend"].version
-    assert version == "3.14"  # Replace 3.14 by the expected version of the workload.
+    juju.integrate(API, POSTGRES)
+    juju.integrate(f"{APP}:flagsmith-api", f"{API}:flagsmith-api")
+    juju.wait(jubilant.all_active, timeout=900)
