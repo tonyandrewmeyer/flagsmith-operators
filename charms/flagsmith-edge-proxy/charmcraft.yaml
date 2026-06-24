@@ -2,19 +2,24 @@
 # See https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/
 type: charm
 name: flagsmith-edge-proxy
-title: Charm Template
-summary: A very short one-line summary of the charm.
+title: Flagsmith Edge Proxy
+summary: The Flagsmith Edge Proxy for low-latency flag evaluation.
 description: |
-  A single sentence that says what the charm is, concisely and memorably.
+  Flagsmith is an open-source feature flag, remote config and A/B testing
+  platform. This charm operates the Flagsmith Edge Proxy: a small read-only
+  service that caches environment documents fetched from the Flagsmith API and
+  serves flag-evaluation requests to SDKs at very low latency, reducing polling
+  load on the API itself.
 
-  A paragraph of one to three short sentences, that describe what the charm does.
+  Point your server-side SDKs at the proxy's `/api/v1/` endpoint to use it. The
+  proxy has no database; it polls the API for environment documents on a
+  configurable interval. Configure it with one or more environment key pairs
+  (a server-side key and its corresponding client-side key).
 
-  A third paragraph that explains what need the charm meets.
+  It is stateless and horizontally scalable; per upstream guidance, keep
+  `web-concurrency` at 1 and scale out with multiple units behind a load
+  balancer.
 
-  Finally, a paragraph that describes whom the charm is useful for.
-
-# Documentation:
-# https://documentation.ubuntu.com/charmcraft/stable/howto/build-guides/select-platforms/
 base: ubuntu@24.04
 platforms:
   amd64:
@@ -31,41 +36,78 @@ parts:
     build-snaps:
       - astral-uv
 
-# (Optional) Configuration options for the charm
-# This config section defines charm config options, and populates the Configure
-# tab on Charmhub.
-# More information on this section at:
-# https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/#config
-# General configuration documentation:
-# https://documentation.ubuntu.com/juju/3.6/reference/configuration/#application-configuration
+containers:
+  flagsmith-edge-proxy:
+    resource: flagsmith-image
+
+resources:
+  flagsmith-image:
+    type: oci-image
+    description: OCI image for the Flagsmith Edge Proxy workload.
+    upstream-source: flagsmith/edge-proxy:2.23.0
+
+requires:
+  flagsmith-api:
+    interface: flagsmith_api
+    limit: 1
+    optional: true
+  ingress:
+    interface: ingress
+    limit: 1
+    optional: true
+  logging:
+    interface: loki_push_api
+    optional: true
+
+peers:
+  edge-proxy-peers:
+    interface: edge_proxy_peers
+
 config:
   options:
-    # An example config option to customise the log level of the workload
     log-level:
       description: |
-        Configures the log level of gunicorn.
-
-        Acceptable values are: "info", "debug", "warning", "error" and "critical"
-      default: "info"
+        Application log level. One of "DEBUG", "INFO", "WARNING", "ERROR",
+        "CRITICAL".
+      default: "INFO"
       type: string
-
-# Your workload's containers.
-# https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/#containers
-containers:
-  some-container:
-    resource: some-container-image
-
-# This field populates the Resources tab on Charmhub.
-# https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/#resources
-resources:
-  # An OCI image resource for each container listed above.
-  # You may remove this if your charm will run without a workload sidecar container.
-  some-container-image:
-    type: oci-image
-    description: OCI image for the 'some-container' container
-    # The upstream-source field is ignored by Charmcraft and Juju, but it can be
-    # useful to developers in identifying the source of the OCI image.  It is also
-    # used by the 'canonical/charming-actions' GitHub action for automated releases.
-    # The test_deploy function in tests/integration/test_charm.py reads upstream-source
-    # to determine which OCI image to use when running the charm's integration tests.
-    upstream-source: some-repo/some-image:some-tag
+    api-url:
+      description: |
+        Explicit base URL of the Flagsmith API the proxy should poll, e.g.
+        "https://flagsmith.example.com". The "/api/v1" path is appended
+        automatically if absent. Overrides the URL learned from the
+        flagsmith-api relation; required when no relation is present.
+      default: ""
+      type: string
+    environment-key-pairs:
+      description: |
+        JSON array of environment key pairs the proxy should serve. Each entry
+        needs a server-side key and its corresponding client-side key, e.g.
+        '[{"server_side_key": "ser.xxxx", "client_side_key": "yyyy"}]'.
+        The proxy serves nothing until at least one pair is configured.
+      default: "[]"
+      type: string
+    api-poll-frequency-seconds:
+      description: How often to poll the API for environment changes (seconds).
+      default: 10
+      type: int
+    api-poll-timeout-seconds:
+      description: Request timeout when polling the API for changes (seconds).
+      default: 5
+      type: int
+    allow-origins:
+      description: Value for the Access-Control-Allow-Origin header.
+      default: "*"
+      type: string
+    web-concurrency:
+      description: |
+        Number of Uvicorn workers per unit. Upstream recommends 1 when running
+        multiple proxy units behind a load balancer.
+      default: 1
+      type: int
+    extra-env:
+      description: |
+        Additional environment variables to inject into the workload, as a JSON
+        mapping. Overrides charm-managed environment of the same name.
+      default: "{}"
+      type: string

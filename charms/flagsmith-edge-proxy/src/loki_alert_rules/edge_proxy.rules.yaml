@@ -1,0 +1,17 @@
+groups:
+  - name: flagsmith-edge-proxy-logs
+    rules:
+      - alert: FlagsmithEdgeProxyErrorLogSpike
+        expr: |
+          sum by (juju_unit) (
+            count_over_time({juju_charm="flagsmith-edge-proxy"} |~ `(?i)\b(error|exception|traceback)\b` [5m])
+          ) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated error logging from the Flagsmith edge proxy"
+          description: >
+            More than 25 error/exception log lines in 5 minutes from
+            {{ $labels.juju_unit }}. The proxy may be failing to reach the
+            Flagsmith API or to refresh environment documents.
