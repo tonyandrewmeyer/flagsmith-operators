@@ -34,6 +34,10 @@ class TaskProcessorConfig:
     database_url: str | None = None
     secret_key: str | None = None
     log_level: str = "INFO"
+    # The processor's image dispatches via gunicorn and exposes Django's
+    # /health/ endpoints, so Django's ALLOWED_HOSTS must permit the host used
+    # by Pebble's HTTP checks ("localhost").
+    allowed_hosts: str = "*"
     num_threads: int = 5
     sleep_interval_ms: int = 500
     queue_pop_size: int = 10
@@ -54,6 +58,7 @@ def build_environment(config: TaskProcessorConfig) -> dict[str, str]:
         "LOG_LEVEL": config.log_level,
         "LOG_FORMAT": "json",
         "ENVIRONMENT": "production",
+        "DJANGO_ALLOWED_HOSTS": config.allowed_hosts,
         "PROMETHEUS_ENABLED": _bool(config.prometheus_enabled),
         "TASK_PROCESSOR_SLEEP_INTERVAL_MS": str(config.sleep_interval_ms),
         "TASK_PROCESSOR_NUM_THREADS": str(config.num_threads),

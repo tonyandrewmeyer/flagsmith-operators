@@ -30,6 +30,9 @@ CONTAINER_NAME = "flagsmith-frontend"
 SERVICE_NAME = "flagsmith-frontend"
 PORT = 8080
 HEALTH_PATH = "/health"
+# Workdir inside the official flagsmith/flagsmith-frontend image; the Node
+# server's entrypoint (api/index) is resolved relative to it.
+WORKING_DIR = "/srv/bt"
 START_COMMAND = "node ./api/index"
 
 
@@ -89,7 +92,7 @@ def build_layer(config: FrontendConfig) -> dict[str, Any]:
                 "override": "replace",
                 "summary": "Flagsmith dashboard frontend",
                 "command": START_COMMAND,
-                "working-dir": "/app",
+                "working-dir": WORKING_DIR,
                 "startup": "enabled",
                 "environment": build_environment(config),
             }

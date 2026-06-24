@@ -96,8 +96,12 @@ config:
       default: 5
       type: int
     allow-origins:
-      description: Value for the Access-Control-Allow-Origin header.
-      default: "*"
+      description: |
+        JSON array of allowed CORS origins for the proxy, sent in the
+        ``Access-Control-Allow-Origin`` response header. The upstream proxy
+        parses this with pydantic-settings, which requires a JSON list (not a
+        bare string). Use ``["*"]`` to allow any origin.
+      default: '["*"]'
       type: string
     web-concurrency:
       description: |

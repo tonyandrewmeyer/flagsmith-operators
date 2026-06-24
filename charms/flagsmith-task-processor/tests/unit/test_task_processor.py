@@ -27,6 +27,9 @@ def test_build_environment_minimal():
     assert env["TASK_PROCESSOR_NUM_THREADS"] == "5"
     assert env["TASK_PROCESSOR_SLEEP_INTERVAL_MS"] == "500"
     assert env["PROMETHEUS_ENABLED"] == "true"
+    # Pebble probes the workload's Django health endpoints over "localhost",
+    # so ALLOWED_HOSTS must permit it (Django returns 400 otherwise).
+    assert env["DJANGO_ALLOWED_HOSTS"] == "*"
     assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in env
 
 

@@ -45,7 +45,9 @@ class EdgeProxyConfig:
     environment_key_pairs: str = "[]"
     api_poll_frequency_seconds: int = 10
     api_poll_timeout_seconds: int = 5
-    allow_origins: str = "*"
+    # The upstream proxy uses pydantic-settings to parse ALLOW_ORIGINS as a
+    # JSON list; passing a bare string (e.g. "*") raises a SettingsError.
+    allow_origins: str = '["*"]'
     web_concurrency: int = 1
     log_level: str = "INFO"
     extra_env: dict[str, str] = field(default_factory=dict)

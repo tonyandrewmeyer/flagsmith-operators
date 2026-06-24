@@ -26,3 +26,6 @@ charmcraft.log
 .vscode/
 *.swp
 .DS_Store
+
+# charm-tracing local OTel buffer (transient).
+.charm_tracing_buffer.raw

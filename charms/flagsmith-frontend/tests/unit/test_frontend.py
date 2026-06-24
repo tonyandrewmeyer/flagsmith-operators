@@ -52,6 +52,9 @@ def test_build_layer():
     layer = build_layer(FrontendConfig(api_url="http://api:8000"))
     svc = layer["services"]["flagsmith-frontend"]
     assert svc["command"] == "node ./api/index"
+    # Must match the upstream image's WORKDIR; otherwise the Node entrypoint
+    # cannot resolve ./api/index and Pebble fails with "no such file".
+    assert svc["working-dir"] == "/srv/bt"
     assert svc["startup"] == "enabled"
     assert "frontend-ready" in layer["checks"]
     assert layer["checks"]["frontend-ready"]["http"]["url"].endswith(":8080/health")
