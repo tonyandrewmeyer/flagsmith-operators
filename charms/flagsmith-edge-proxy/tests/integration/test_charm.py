@@ -19,9 +19,7 @@ PAIRS = '[{"server_side_key": "ser.example", "client_side_key": "example"}]'
 
 def test_deploy(charm: pathlib.Path, juju: jubilant.Juju):
     """Deploy the proxy; without an API URL it should block, then unblock."""
-    resources = {
-        "flagsmith-image": METADATA["resources"]["flagsmith-image"]["upstream-source"]
-    }
+    resources = {"flagsmith-image": METADATA["resources"]["flagsmith-image"]["upstream-source"]}
     juju.deploy(charm.resolve(), app=APP, resources=resources)
 
     # No API URL and no key pairs -> blocked.
