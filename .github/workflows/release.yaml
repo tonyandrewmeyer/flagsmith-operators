@@ -11,6 +11,9 @@ on:
       - "charms/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     uses: ./.github/workflows/ci.yaml
@@ -29,9 +32,11 @@ jobs:
           - flagsmith-frontend
           - flagsmith-edge-proxy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Upload charm to Charmhub
-        uses: canonical/charming-actions/upload-charm@2.7.0
+        uses: canonical/charming-actions/upload-charm@1753e0803f70445132e92acd45c905aba6473225 # 2.7.0
         with:
           credentials: ${{ secrets.CHARMHUB_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
