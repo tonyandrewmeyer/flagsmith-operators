@@ -326,7 +326,7 @@ class FlagsmithApiCharm(ops.CharmBase):
             event.add_status(ops.WaitingStatus("waiting for secret-key (peer or user secret)"))
             return
         services = self.container.get_services(SERVICE_NAME)
-        if not services or not list(services.values())[0].is_running():
+        if not services or not next(iter(services.values())).is_running():
             event.add_status(ops.WaitingStatus("starting Flagsmith API"))
             return
         event.add_status(ops.ActiveStatus())

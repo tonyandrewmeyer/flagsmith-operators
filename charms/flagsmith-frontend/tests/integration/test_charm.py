@@ -19,11 +19,11 @@ POSTGRES = "postgresql-k8s"
 
 def test_deploy_and_integrate(charm: pathlib.Path, juju: jubilant.Juju):
     """Deploy the frontend with the API + PostgreSQL and reach active."""
-    resources = {
-        "flagsmith-image": METADATA["resources"]["flagsmith-image"]["upstream-source"]
-    }
+    resources = {"flagsmith-image": METADATA["resources"]["flagsmith-image"]["upstream-source"]}
     juju.deploy(charm.resolve(), app=APP, resources=resources)
-    juju.deploy(API, channel="latest/edge", resources={"flagsmith-image": "flagsmith/flagsmith:2.245.0"})
+    juju.deploy(
+        API, channel="latest/edge", resources={"flagsmith-image": "flagsmith/flagsmith:2.245.0"}
+    )
     juju.deploy(POSTGRES, channel="14/stable", trust=True)
 
     # Blocked until it knows the API URL.

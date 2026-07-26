@@ -123,7 +123,7 @@ class FlagsmithEdgeProxyCharm(ops.CharmBase):
             event.add_status(ops.BlockedStatus("configure environment-key-pairs"))
             return
         services = self.container.get_services(SERVICE_NAME)
-        if not services or not list(services.values())[0].is_running():
+        if not services or not next(iter(services.values())).is_running():
             event.add_status(ops.WaitingStatus("starting Flagsmith edge proxy"))
             return
         event.add_status(ops.ActiveStatus())

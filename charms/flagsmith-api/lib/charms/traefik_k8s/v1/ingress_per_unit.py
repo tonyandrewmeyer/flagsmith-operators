@@ -406,9 +406,9 @@ class IngressPerUnitProvider(_IngressPerUnitBase):
         """Report whether the given unit has shared data in its unit data bag."""
         # confidence check: this should not occur in production, but it may happen
         # during testing: cfr https://github.com/canonical/traefik-k8s-operator/issues/39
-        assert (
-            unit in relation.units
-        ), "attempting to get ready state for unit that does not belong to relation"
+        assert unit in relation.units, (
+            "attempting to get ready state for unit that does not belong to relation"
+        )
         try:
             self._get_requirer_unit_data(relation, unit)
         except (KeyError, DataValidationError):

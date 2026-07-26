@@ -227,7 +227,8 @@ class KubernetesServicePatch(Object):
         expected_ports = [(p.port, p.targetPort) for p in self.service.spec.ports]  # type: ignore[attr-defined]
         # Construct a list in the same manner, using the fetched service
         fetched_ports = [
-            (p.port, p.targetPort) for p in service.spec.ports  # type: ignore[attr-defined]
+            (p.port, p.targetPort)
+            for p in service.spec.ports  # type: ignore[attr-defined]
         ]  # noqa: E501
         return expected_ports == fetched_ports
 
@@ -235,7 +236,6 @@ class KubernetesServicePatch(Object):
         """Handle the upgrade charm event."""
         # If a charm author changed the service type from LB to ClusterIP across an upgrade, we need to delete the previous LB.
         if self.service_type == "ClusterIP":
-
             client = Client()  # pyright: ignore
 
             # Define a label selector to find services related to the app
